@@ -18,9 +18,7 @@ import javax.swing.border.CompoundBorder;
 import javax.swing.border.EmptyBorder;
 import javax.swing.border.MatteBorder;
 import java.awt.*;
-import java.awt.event.MouseAdapter;
-import java.awt.event.MouseEvent;
-import java.awt.event.MouseMotionAdapter;
+import java.awt.event.*;
 import java.awt.geom.Rectangle2D;
 import java.io.BufferedReader;
 import java.io.IOException;
@@ -139,6 +137,7 @@ public class App extends JFrame {
             }
         });
 
+        chartPanel.addMouseWheelListener(new MouseWheelListenerPanel());
         recommendationPanel = new JPanel(new BorderLayout());
         recommendationPanel.setBackground(CARD_COLOR);
         recommendationPanel.setBorder(new RoundedBorder(15, BORDER_COLOR));
@@ -246,6 +245,10 @@ public class App extends JFrame {
         return button;
     }
 
+    /**
+     * Creates the search panel based on the general design
+     * @return The JPanel containing the search components
+     */
     private JPanel createSearchPanel() {
         JPanel searchPanel = new JPanel(new BorderLayout(10, 10));
         searchPanel.setOpaque(false);
@@ -292,6 +295,9 @@ public class App extends JFrame {
     }
 
 
+    /**
+     * Searches for the stock based on the input in the search field
+     */
     private void searchStock() {
         String input = searchField.getText().trim();
         if (input.isEmpty()) {
@@ -434,6 +440,7 @@ public class App extends JFrame {
 
         TimeSeriesCollection dataset = new TimeSeriesCollection(series);
 
+        // Create the chart with the dataset
         JFreeChart chart = ChartFactory.createTimeSeriesChart(
                 symbol + " Stock Price (Past Year)",
                 "Date",
@@ -447,6 +454,7 @@ public class App extends JFrame {
         chart.setBackgroundPaint(CARD_COLOR);
         chart.getTitle().setPaint(TEXT_PRIMARY);
 
+        //Change the chart's appearance to match the theme
         XYPlot plot = chart.getXYPlot();
         plot.setBackgroundPaint(CARD_COLOR);
         plot.setDomainGridlinePaint(BORDER_COLOR);
@@ -458,6 +466,7 @@ public class App extends JFrame {
         plot.getRangeAxis().setLabelPaint(TEXT_PRIMARY);
         plot.getRangeAxis().setTickLabelPaint(TEXT_SECONDARY);
 
+        //Add recommendation annotations and change their color based on the recommendation
         SwingUtilities.invokeLater(() -> {
             chartPanel.setChart(chart);
             chartPanel.revalidate();
@@ -553,7 +562,6 @@ public class App extends JFrame {
                 Date date = dateFormat.parse(dates.get(index));
                 XYTextAnnotation annotation = new XYTextAnnotation("B", date.getTime(), prices.get(index) * 0.98);
 
-
                 annotation.setFont(new Font("SansSerif", Font.BOLD, 10));
                 annotation.setPaint(BUY_COLOR);
                 annotation.setBackgroundPaint(new Color(0, 0, 0, 0));
@@ -563,6 +571,7 @@ public class App extends JFrame {
             for (int index : sellPoints) {
                 Date date = dateFormat.parse(dates.get(index));
                 XYTextAnnotation annotation = new XYTextAnnotation("S", date.getTime(), prices.get(index) * 1.02);
+
                 annotation.setFont(new Font("SansSerif", Font.BOLD, 10));
                 annotation.setPaint(SELL_COLOR);
                 annotation.setBackgroundPaint(new Color(0, 0, 0, 0));
@@ -705,7 +714,7 @@ public class App extends JFrame {
                 String dateStr = dateFormat.format(new Date((long) x));
                 tooltipContent.setText(String.format("%s | $%.2f", dateStr, y));
                 tooltipWindow.pack();
-                tooltipWindow.setLocation(e.getLocationOnScreen().x + 15, e.getLocationOnScreen().y - 40);
+                tooltipWindow.setLocation(e.getLocationOnScreen().x + 15, yPixel+250);
                 tooltipWindow.setVisible(true);
             }
         }
@@ -717,6 +726,81 @@ public class App extends JFrame {
          * @return The interpolated Y value at the given X
          */
         private double findYValueAtX(XYPlot plot, double x) {
+            //Debugging help from ChatGPT
+            TimeSeriesCollection dataset = (TimeSeriesCollection) plot.getDataset();
+            TimeSeries series = dataset.getSeries(0);
+
+            long targetTime = (long) x;
+            int prevIndex = -1;
+            int nextIndex = -1;
+
+            for (int i = 0; i < series.getItemCount(); i++) {
+                long itemTime = series.getTimePeriod(i).getStart().getTime();
+                if (itemTime <= targetTime) {
+                    prevIndex = i;
+                } else {
+                    nextIndex = i;
+                    break;
+                }
+            }
+
+            if (prevIndex == -1) return series.getValue(0).doubleValue();
+            if (nextIndex == -1) return series.getValue(series.getItemCount() - 1).doubleValue();
+
+            long t1 = series.getTimePeriod(prevIndex).getStart().getTime();
+            long t2 = series.getTimePeriod(nextIndex).getStart().getTime();
+            double y1 = series.getValue(prevIndex).doubleValue();
+            double y2 = series.getValue(nextIndex).doubleValue();
+
+            double alpha = (double) (targetTime - t1) / (t2 - t1);
+            return y1 + alpha * (y2 - y1);
+        }
+    }
+
+    class MouseWheelListenerPanel extends JPanel implements MouseWheelListener
+    {
+
+        @Override
+        public void mouseWheelMoved(MouseWheelEvent e)
+        {
+            if (chartPanel.getChart() != null) {
+                XYPlot plot = (XYPlot) chartPanel.getChart().getPlot();
+                double x = plot.getDomainAxis().java2DToValue(
+                        e.getX(),
+                        chartPanel.getScreenDataArea(),
+                        plot.getDomainAxisEdge()
+                );
+
+                double y = findYValueAtX(plot, x);
+
+                int yPixel = (int) plot.getRangeAxis().valueToJava2D(
+                        y,
+                        chartPanel.getScreenDataArea(),
+                        plot.getRangeAxisEdge()
+                );
+
+                currentYValue = y;
+                cursorDotPosition = new Point(e.getX(), yPixel);
+                chartPanel.repaint();
+
+                SimpleDateFormat dateFormat = new SimpleDateFormat("MMM dd, yyyy");
+                String dateStr = dateFormat.format(new Date((long) x));
+                tooltipContent.setText(String.format("%s | $%.2f", dateStr, y));
+                tooltipWindow.pack();
+                tooltipWindow.setLocation(e.getLocationOnScreen().x + 15, yPixel+250);
+                tooltipWindow.setVisible(true);
+            }
+
+        }
+
+        /**
+         * Finds the Y value at a given X position in the plot
+         * @param plot The XYPlot containing the data
+         * @param x The X value to find the corresponding Y value for
+         * @return The interpolated Y value at the given X
+         */
+        private double findYValueAtX(XYPlot plot, double x) {
+            //Debugging help from ChatGPT
             TimeSeriesCollection dataset = (TimeSeriesCollection) plot.getDataset();
             TimeSeries series = dataset.getSeries(0);
 
